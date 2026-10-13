@@ -1,0 +1,194 @@
+Light-curve (time series signal data)
+Training set  split into:
+    train (80%)
+    validation (20%) for tuning (early stopping, hyperparameters)
+
+Test → untouched (final evaluation only)(unbiased)
+Models used for deeper analysis : (only compatible for our light curve sequence dataset)
+1.MLP --baseline
+2.CNN -- spatial learning
+3.LSTM -- temporal learning
+4.HYBRID(CNN + LSTM) -- Hybrid learning
+5.transformers(advanced)
+
+1. MLP Model
+Used cross entropy for 
+- multi class classification
+- automatically applies softmax(positves and negatives into probabilities)
+intial - Validation Accuracy: 0.9921414256095886 (overfit), why? cuz MLP ignores sequence structure and Treats data as flat vector
+The MLP model achieved high training accuracy but showed clear signs of overfitting after several epochs, indicating its inability to generalize effectively on sequential flux data.
+after adding weight_decay 1e-05 - underfitted 
+
+
+
+
+
+2. CNN 
+gave 2 layers 
+initial - Validation Accuracy: 0.9921414256095886
+now after batch training and updated loop - Validation Accuracy: 0.9921414256095886 - noticed changes are train loss decreased from epoch 1 to 20 (but not in linear fashion) nad val loss decreased from 84 to 3 (but got spiked up at epoch 9)
+after batch training + updated nn conv1d -Validation Accuracy: 0.9921414256095886
+ the train loss came down (but not gradually) and val loss came down too but not gradually too 
+ [[1010    0]
+ [   8    0]] - confusion matrix 
+               precision    recall  f1-score   support
+...
+weighted avg       0.98      0.99      0.99      1018
+
+tensor([   0, 4040,   29])
+tensor([   0, 1010,    8]) - class distributionn
+
+this is after giving stratify=y and changed classes from 3 to 2 by y = y-1
+Validation Accuracy: 0.9931237697601318
+[1010    1]
+...
+    accuracy                           0.99      1018
+   macro avg       0.75      0.57      0.61      1018
+weighted avg       0.99      0.99      0.99      1018
+
+“Predict class 0 almost always → high accuracy” -- Even with class weights, it’s still biased.
+
+model behavior:
+Good at detecting normal signals
+Bad at detecting rare exoplanets
+
+now - working model to research level model 
+using manual weights instead - weights = torch.tensor([1.0, 50.0]) (forcing model to are abt rare classes) - even tho we changed the manual weights nothing changed cuz the imbalance is 4039 : 30  ≈ 135 : 1
+
+now after adding weighted random sampler only (not manual weights)- Validation Accuracy: 0.9646365642547607
+[981  30]
+...
+    accuracy                           0.96      1018
+   macro avg       0.51      0.56      0.52      1018
+weighted avg       0.99      0.96      0.98      1018
+
+More recall (catch rare planets)
+↓
+More false positives
+↓
+Lower accuracy
+
+
+
+3. LSTM 
+Validation Accuracy: 0.8821218013763428
+[[898 113]
+ [  7   0]]
+              precision    recall  f1-score   support
+...
+    accuracy                           0.88      1018
+   macro avg       0.50      0.44      0.47      1018
+weighted avg       0.99      0.88      0.93      1018
+"tries harder than CNN but still fails to detect rare class"
+LSTM → tries to learn long-term dependencies
+Exoplanet detection is more about local patterns, not long memory
+
+after adding bidirectional search LSTM ( this took 4x time normal lstm took)
+Validation Accuracy: 0.7318271398544312
+[[744 267]
+ [  6   1]]
+              precision    recall  f1-score   support
+...
+    accuracy                           0.73      1018
+   macro avg       0.50      0.44      0.43      1018
+weighted avg       0.99      0.73      0.84      1018
+
+
+4. Hybrid model 
+Input → CNN → feature maps → LSTM → classifier
+Validation Accuracy: 0.8870334029197693
+[[900 111]
+ [  4   3]]
+              precision    recall  f1-score   support
+...
+    accuracy                           0.89      1018
+   macro avg       0.51      0.66      0.49      1018
+weighted avg       0.99      0.89      0.93      1018
+Higher recall → more false positives
+Lower false positives → miss real planets
+
+Validation Accuracy: 0.8300589323043823
+[[842 169]
+ [  4   3]]
+              precision    recall  f1-score   support
+...
+    accuracy                           0.83      1018
+   macro avg       0.51      0.63      0.47      1018
+weighted avg       0.99      0.83      0.90      1018 - this is after threshold tuning (used softmax) - preds = (probs[:,1] > 0.3).long() -- this shows more willing to call things rare, But not actually finding more real ones
+Threshold tuning only changes decision boundary,
+not what the model has learned.
+
+Validation Accuracy: 0.9597249627113342
+[[974  37]
+ [  4   3]]
+              precision    recall  f1-score   support
+...
+    accuracy                           0.96      1018
+   macro avg       0.54      0.70      0.55      1018
+weighted avg       0.99      0.96      0.97      1018 -- this is after increasing the feature mapping -- false positives dropped significantly - it got better at representing dip patterns 
+- this is the best balanced model so far 
+
+
+VALIDATION RESULTS
+Accuracy: 0.9872298624754421
+
+Confusion Matrix
+[[1005    6]
+ [   7    0]]
+
+Classification Report
+              precision    recall  f1-score   support
+
+           0       0.99      0.99      0.99      1011
+           1       0.00      0.00      0.00         7
+
+    accuracy                           0.99      1018
+   macro avg       0.50      0.50      0.50      1018
+weighted avg       0.99      0.99      0.99      1018
+
+Adding attention mechanisms did not improve performance
+under extreme class imbalance and limited training data.
+
+
+Accuracy: 0.7966601252555847
+[[808 203]
+ [  4   3]]
+              precision    recall  f1-score   support
+
+           0       1.00      0.80      0.89      1011
+           1       0.01      0.43      0.03         7
+...
+    accuracy                           0.84       570
+   macro avg       0.51      0.72      0.49       570
+weighted avg       0.99      0.84      0.91       570 -- this is for unseen test data - 15 epochs
+
+
+"Precision–Recall analysis of the proposed CNN-LSTM hybrid architecture demonstrating improved rare exoplanet candidate detection under severe class imbalance conditions."[for precision recall graph caption]
+
+5. transformers
+Validation Accuracy: 0.0068762279115617275
+[[   0 1011]
+ [   0    7]]
+              precision    recall  f1-score   support
+...
+    accuracy                           0.01      1018
+   macro avg       0.00      0.50      0.01      1018
+weighted avg       0.00      0.01      0.00      101 - #using only 500 sequence length instead of 3000 and reduced bathc size form 32 to 16
+
+Validation Accuracy: 0.9931237697601318
+[[1011    0]
+ [   7    0]]
+              precision    recall  f1-score   support
+...
+    accuracy                           0.99      1018
+   macro avg       0.50      0.50      0.50      1018
+weighted avg       0.99      0.99      0.99      1018 --removed sampler + reduced sequence from 500 to 300 + class weights (which is there previously also) + embedding is 64 only 
+
+- we are seeing both extremes here - one with sampler and one without = so transformers not learning the rare classes but choosing the easiest global strategy
+
+Transformers are NOT suitable for small, highly imbalanced time-series datasets
+
+Transformers demonstrated interpretable attention behavior
+but failed to achieve robust classification performance
+under limited and highly imbalanced training conditions. [This is for Attention map ] 
+"Attention visualization of the Transformer-based model indicating sequence regions prioritized during exoplanet classification." - caption

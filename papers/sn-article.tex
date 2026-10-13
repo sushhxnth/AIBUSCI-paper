@@ -1,0 +1,707 @@
+%% 
+%% Copyright 2007-2020 Elsevier Ltd
+%% 
+%% This file is part of the 'Elsarticle Bundle'.
+%% ---------------------------------------------
+%% 
+%% Manuscript prepared for INITIAL SUBMISSION / REVIEW to
+%% Astronomy & Computing (Elsevier), using the elsarticle class
+%% in single-column "preprint" format, per Elsevier's
+%% "Your Paper Your Way" policy. Elsevier's production team will
+%% apply final two-column typesetting only after acceptance.
+%%
+%% REVISION NOTE: This version incorporates a major revision
+%% addressing reviewer feedback: (1) novelty is now framed
+%% explicitly around architectural inductive bias under severe
+%% class imbalance rather than as a general benchmarking study;
+%% (2) explicit research questions (RQ1-RQ4) are stated in the
+%% Introduction; (3) Introduction and Discussion have been
+%% compressed and de-duplicated; (4) causal language has been
+%% softened throughout to "consistent with" framing given the
+%% single-split, non-ablated, non-significance-tested design;
+%% (5) a dedicated, itemized Limitations section consolidates
+%% all caveats previously scattered across the Discussion;
+%% (6) raw code-style output has been removed from prose; (7)
+%% per-model imbalance-handling strategy is now stated in
+%% Table~2. No result, figure, table value, or bibliography
+%% entry has been altered.
+%%
+
+\documentclass[preprint,11pt,times]{elsarticle}
+
+%% ==========================================================
+%% Standard packages (carried over from the previous version)
+%% ==========================================================
+\usepackage{graphicx}%
+\usepackage{multirow}%
+\usepackage{amsmath,amssymb,amsfonts}%
+\usepackage{amsthm}%
+\usepackage{mathrsfs}%
+\usepackage{xcolor}%
+\usepackage{textcomp}%
+\usepackage{booktabs}%
+\usepackage{tabularx}%
+\usepackage{adjustbox}%
+\usepackage{longtable}%
+\usepackage{array}%
+\usepackage{float}
+\usepackage{placeins}%
+\usepackage{algorithm}%
+\usepackage{algorithmicx}%
+\usepackage{algpseudocode}%
+\usepackage{listings}%
+\usepackage{enumitem}%
+\usepackage{xurl}
+\usepackage[hidelinks]{hyperref}
+\usepackage{hyperref}
+
+%% ==========================================================
+%% Theorem-style environments (kept for consistency; not
+%% currently invoked in the body text)
+%% ==========================================================
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{example}{Example}
+\newtheorem{remark}{Remark}
+\newtheorem{definition}{Definition}
+
+\journal{Astronomy \& Computing}
+
+\begin{document}
+
+\begin{frontmatter}
+
+\title{Architectural Inductive Bias Under Severe Class Imbalance in Exoplanet Detection: Machine Learning and Deep Neural Architectures on Kepler Light-curves}
+
+\author[first]{B.~Sushanth Rao\corref{cor1}}
+\ead{sushanthbobby701@gmail.com}
+
+\affiliation[first]{organization={Department of Computer Science and Engineering, Matrusri Engineering College},
+            city={Hyderabad},
+            state={Telangana},
+            country={India}}
+
+\cortext[cor1]{Corresponding author}
+
+\begin{abstract}
+As photometric surveys generate more candidate exoplanet signals than can be manually reviewed, automated vetting has become essential. Rather than proposing a new architecture, this study investigates how the inductive bias of established machine learning and deep learning architectures interacts with the structural properties of transit signals and with severe class imbalance, using two complementary Kepler-derived datasets. On the structured NASA KOI catalog (1,913 test samples of photometric, stellar, and orbital parameters), Random Forest achieved the highest observed test accuracy (91.17\%, macro F1 = 0.89) among five classical classifiers. On raw Kepler light-curves (5,087 training/validation sequences of 3,197 flux measurements, with only 37 positive examples in training/validation pool and a 135:1 class imbalance), a CNN-LSTM hybrid architecture achieved the highest observed validation performance among five deep learning architectures (evaluated across nine experimental configurations) (95.97\% accuracy, macro recall 0.70), while the evaluated Transformer configuration collapsed to majority-class prediction under the same conditions. Critically, this validation performance did not transfer to the held-out test set: the same CNN-LSTM model reached 98.95\% test accuracy while macro recall fell to 0.4991, indicating that standard accuracy metrics can mask a near-complete failure to detect minority-class (exoplanet) instances. Precision-recall analysis and attention-map visualization relate this behavior to a structural mismatch between the short, morphologically-localized nature of transit events and the long-range, globally-connected structure of self-attention, in contrast to convolutional locality and bounded recurrent memory. These findings provide evidence that observed performance differences are associated with architectural inductive bias and training configuration under severe class imbalance, motivating evaluation protocols that prioritize minority-class recall rather than accuracy alone.
+\end{abstract}
+
+\begin{keyword}
+exoplanet detection \sep Kepler dataset \sep machine learning \sep deep learning \sep CNN-LSTM hybrid \sep class imbalance \sep transit photometry \sep random forest \sep light-curve classification \sep inductive bias
+\end{keyword}
+
+\end{frontmatter}
+
+\section{Introduction}\label{sec1}
+
+Kepler and its successor, the Transiting Exoplanet Survey Satellite (TESS), have together produced photometric time series for hundreds of thousands of stars and identified more than 5,500 planetary candidates requiring systematic vetting \cite{bib1,bib2}. Each candidate signal must be distinguished from instrumental systematics, stellar variability, and astrophysical false positives such as eclipsing binaries, a task too large in scale for exhaustive manual review \cite{bib1}. Rule-based vetting systems such as the Kepler Robovetter apply fixed threshold tests on pipeline-derived parameters and scale well operationally, but are not easily adapted to new signal morphologies or new instruments \cite{bib5}.
+
+Machine learning and deep learning approaches have been suggested as more flexible approaches to rule-based vetting. AstroNet \cite{bib6} showed that an end-to-end CNN on phase-folded light curves can achieve expert-level vetting, but was trained and evaluated on a large curated set of TCEs without characterizing its performance in the presence of few positive examples. While addressing class imbalance directly, Olmedo et al. \cite{bib7} did so mostly by synthetic data augmentation, which normalizes away the class imbalance that this study is concerned with rather than characterizing model behavior under class imbalance. ExoMiner \cite{bib14} is reliable at production scale, but is an ensemble optimized for the highest accuracy on a large curated training set and doesn't report the validation-to-test generalization behavior under severe imbalance, nor isolate the contribution of any single architecture's inductive bias. These studies do not assess architectural inductive bias without augmentation, in a rare positive class, or test whether good performance on the validation set translates to good performance on minority classes. This study addresses that gap directly, rather than proposing a new architecture or claiming an optimal one.
+
+We organize the investigation around four research questions:
+\begin{itemize}[leftmargin=1.6em]
+\item \textbf{RQ1:} How do classical machine learning classifiers perform on structured, pipeline-derived KOI catalog features?
+\item \textbf{RQ2:} How does the choice of deep learning inductive bias (local, recurrent, hybrid, or attention-based) affect classification of raw Kepler light-curves?
+\item \textbf{RQ3:} How does severe class imbalance combined with a scarce positive class alter apparent model performance between validation-time and held-out test-time evaluation?
+\item \textbf{RQ4:} Why does the evaluated attention-based Transformer configuration behave differently from locality-aware architectures under these conditions?
+\end{itemize}
+
+Correspondingly, this work contributes: (1) a controlled comparison investigating the role of architectural inductive bias on transit detection, holding data, preprocessing, and largely shared training protocol fixed across ten classical and deep learning models; (2) a diagnostic characterization of the validation-to-test generalization gap that arises under 135:1 class imbalance with only 37 positive training/validation examples, showing that high accuracy, and even strong validation-set recall, do not guarantee minority-class detection on unseen data; (3) an empirical and visual account, via precision-recall analysis and attention-map inspection, of why the evaluated Transformer configuration collapses to majority-class prediction under this regime; and (4) appropriately scoped, evidence-based guidance for evaluation practice in exoplanet detection pipelines, emphasizing minority-class recall over accuracy.
+
+\section{Background and Literature Review}\label{sec2}
+
+\subsection{Observational Foundations: Transit Photometry and Radial Velocity}\label{subsec2a}
+
+Transiting exoplanets are detected as periodic, shallow dimmings in a host star's photometric light-curve, with transit depth scaling approximately as the square of the planet-to-star radius ratio, and transit duration and shape encoding orbital geometry and stellar limb darkening \cite{bib1}. Kepler's photometric precision (\textasciitilde20 ppm at 6.5-hour cadence) enabled detection of Earth-sized transits around Sun-like stars over its \textasciitilde4-year baseline \cite{bib1}, whereas TESS trades sky coverage (85\% of the sky) for much shorter per-sector baselines (27 days), biasing detections toward shorter-period planets and directly constraining the sequence length and temporal context available to any downstream classifier \cite{bib2}. Radial-velocity follow-up independently constrains planetary mass and orbital parameters, and several spectroscopically derived stellar parameters, effective temperature (koi\_steff), surface gravity (koi\_slogg), and stellar radius (koi\_srad), appear as predictive features in the KOI catalog used for the machine learning experiments in Section~\ref{sec4}.
+
+\subsection{Machine Learning Approaches in Exoplanet Vetting}\label{subsec2b}
+
+Machine learning applied to catalog-based vetting predates the deep learning era, with random forests and support vector machines applied to Kepler pipeline-derived parameters \cite{bib13}. The fully automated KOI catalog \cite{bib5} both motivated and became a benchmark for these classifiers. Catalog-based approaches inherit substantial domain knowledge already encoded in features such as the disposition score (koi\_score) and false-positive flags, which prior work consistently finds dominate feature-importance rankings; the learning problem is therefore partly one of re-weighting the upstream pipeline's own uncertainty estimates rather than learning transit morphology from first principles. Random forests are well suited to this setting because they tolerate heterogeneous, correlated feature scales and provide interpretable feature-importance rankings, both relevant to the 49-column KOI feature set used here.
+
+\subsection{Deep Learning for Raw Light-Curve Classification}\label{subsec2c}
+
+Shallue and Vanderburg's AstroNet \cite{bib6} demonstrated that a 1D convolutional network trained end-to-end on phase-folded, globally detrended light-curves can match expert vetting performance and discover new planets, establishing that convolutional locality and translation invariance are well matched to the compact, stereotyped morphology of a transit dip. Recurrent architectures were subsequently explored to capture longer-range stellar variability directly from unfolded sequences, with mixed empirical success, motivating hybrid CNN-recurrent designs in which convolutional layers extract local morphological features that a recurrent layer then integrates over the full observation window \cite{bib7}. The additional use of domain information like time series of centroid locations and stellar parameters \cite{bib15} further improved the recall of low signal-to-noise transits. The latest development in this series is self-attention and transformer networks in which all time steps are connected to each other without any recurrent bottleneck, though large and relatively well-balanced training sets are known to be crucial for significant attention patterns \cite{bib9}. This progression, from fixed-threshold rules, to feature-engineered classifiers, to increasingly global neural architectures, motivates the central question of this work: whether architectures with broader receptive fields necessarily generalize better than locally-constrained ones when applied to a signal that is intrinsically local, and when positive examples are severely limited.
+
+\subsection{Class Imbalance in Machine Learning}\label{subsec2d}
+
+Outside of the astronomical context, there is a large body of general-purpose literature on severe class imbalance. Oversampling methods, such as SMOTE \cite{bib4}, create minority class examples in the feature space to equalize the number of examples per class, while loss-reweighting methods, such as focal loss \cite{bib3} and class-balanced loss based on the effective number of examples \cite{bib10}, directly alter the loss function to penalize over-representation of the majority class. The families have been extensively studied in the scenarios of tabular and image classification with moderate to severe imbalance, typically having hundreds to thousands of minority class examples. The synthetic oversampling techniques like SMOTE, focal loss, or class-balanced loss are not assessed in this study. Rather, in some deep learning architectures, a weighted random sampling technique is employed to boost the representation of minority classes in the training set. Since the sampling strategies are not the same for all configurations, the observed differences in performance cannot be solely attributed to the architectural inductive bias. The study thus investigates the joint performance of the architectures and training strategies considered in the presence of severe class imbalance, but does not attempt to fully separate the effects of architecture and class imbalance treatment.
+
+It is not only the domain, it is also the level of the problem; the problem used here is at the sparse end, even when compared to other "severe-imbalance" problems in the literature, like SMOTE or focal-loss, where the minority classes are small compared to the majority, but not this small in absolute size. This distinction is important because it is assumed that there is enough signal from the minority class to be able to make a meaningful synthesis/reweighting, which is not necessarily the case with only 37 positive training/validation examples. The reason for this is that this study does not aim to test the performance of advanced synthetic imbalance-correction techniques (RQ3, Section~\ref{sec1}), but rather to investigate the interplay between architectures and baseline sampling strategies.
+
+\section{Dataset Description}\label{sec3}
+
+This study uses two independent datasets corresponding to two distinct evaluation tracks, described separately below. The two tracks are not merged, and results between them are not directly compared as measures of one model being superior to another (see Section~\ref{subsec7a}).
+
+\subsection{NASA KOI Catalog - Machine Learning Dataset}\label{subsec3a}
+
+The NASA Exoplanet Archive Kepler Object of Interest (KOI) catalog was used for all classical machine learning experiments. This catalog combines the results of Kepler's automated Box Least Squares (BLS) transit search algorithm, automated and manual vetting, and stellar characterization from ground-based spectroscopy. Each entry represents a stellar target flagged for a transit-like signal, characterized by parameters spanning orbital dynamics, photometric fit quality, stellar properties, and vetting metadata.
+
+After removing identifier columns (kepid, kepoi\_name, kepler\_name), text-type metadata (koi\_pdisposition, koi\_tce\_delivname), and the primary target label (koi\_disposition), the working feature set comprised 49 numerical columns. The disposition categories were mapped to three integer classes: confirmed exoplanet (1), false positive (0), and candidate (2). Following removal of rows with missing disposition labels and median imputation for missing numerical feature values, the final dataset contained 9,564 labeled samples with the following class distribution: 2,368 false positives (Class 0), 2,356 confirmed exoplanets (Class 1), and 4,840 candidates (Class 2). Using stratified train-test split, the data was divided in two parts, 7,651 samples were used as training set and 1,913 were used as test set, maintaining the same class distribution.
+
+All numerical features were normalized using Standard Scaler (zero mean and unit variance) which is important for distance based models like KNN and kernel SVM and is helpful in convergence of logistic regression. For the three-class distribution of the ensemble methods, no class balancing was applied at the data level for the machine learning experiments, the per-class performance being tracked by the precision, recall and F1-score metrics.
+
+\begin{table}[h]
+\caption{Summary of the NASA KOI Catalog Dataset (Machine Learning Track)}\label{tab1}%
+\begin{tabular}{@{}lll@{}}
+\toprule
+Dataset Aspect & Detail & Value \\
+\midrule
+Total Dataset & -  & 9,564 \\
+Held-out test set [20\%]& Post-preprocessing & 1,913 \\
+Class 0 (False Positive) & Confirmed non-planet & 474 (24.8\%) \\
+Class 1 (Confirmed Exoplanet) & Confirmed planet & 471 (24.6\%) \\
+Class 2 (Candidate) & Awaiting confirmation & 968 (50.6\%) \\
+Feature columns & Engineered + physical parameters & 49 \\
+Train / Test split & Stratified & 80\% / 20\% \\
+Normalization & Standard Scaler & Zero-mean, unit-variance \\
+Missing value handling & Numerical columns & Column-wise median imputation \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Exoplanet Hunting in Deep Space - Deep Learning Dataset}\label{subsec3b}
+
+The deep learning experiments were performed on the Exoplanet Hunting in Deep Space dataset, consisting of raw stellar flux time-series data (light-curves) from Kepler long-cadence photometry. Each sample is a vector of 3,197 flux measurements at regular time intervals, with a binary label indicating whether the target star is a confirmed exoplanet host.
+
+The training set contains 5,087 stellar observations, of which \textbf{37}   (training/ validation) belong to the positive class (confirmed exoplanet host stars) and 5,050 to the negative class (non-hosting stars); the resulting class imbalance ratio is approximately 135:1. This ratio reflects the true rarity of detectable transiting planets in an actual photometric survey and is the central experimental challenge of the deep learning track. The held-out test partition contains 570 observations, of which \textbf{5} are positive and 565 are negative; this test partition was not accessed during any training or architecture-selection step.
+
+The 5,087-sample partition was further split into a training set (80\%) and a validation set (20\%), the latter used for early stopping and hyperparameter selection. Flux values were normalized per-sample to zero mean and unit variance to reduce the impact of variation in stellar magnitude across targets. For LSTM and hybrid experiments, a weighted random sampler was used to balance classes at the batch level within the PyTorch DataLoader. Because self-attention has $O(n^2)$ memory complexity, the sequence length used for Transformer experiments was reduced from 3,197 to 300 timesteps (see Section~\ref{sec9} for the implications of this reduction).
+
+\begin{table}[h]
+\caption{Summary of the Exoplanet Hunting in Deep Space Dataset (Deep Learning Track)}\label{tab2}%
+\begin{tabular}{@{}lll@{}}
+\toprule
+Partition & Detail & Value \\
+\midrule
+Training + Validation -- 80\% / 20\% & Total observations (before split) & 5087 \\
+ & Confirmed exoplanet hosts (positive) & 37 (0.73\%) \\
+ & Non-exoplanet stars (negative) & 5050 (99.27\%) \\
+ & Class imbalance ratio & \textasciitilde135:1 \\
+Test (held-out) & Total observations & 570 \\
+ & Confirmed exoplanet hosts & 5 (0.88\%) \\
+ & Non-exoplanet stars & 565 (99.12\%) \\
+Features per sample & Flux timesteps & 3,197 \\
+Preprocessing & Per-sample normalization & Zero-mean, unit-variance \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Methodology}\label{sec4}
+
+\subsection{Machine Learning Models}\label{subsec4a}
+
+Five classical machine learning algorithms were chosen to represent the main paradigms of discriminative learning: linear, tree-based, ensemble-based, instance-based, and kernel-based inductive biases.
+
+\subsubsection{Logistic Regression}\label{subsubsec4a1}
+
+Logistic regression treats the posterior probability of each class as a softmax transformation of a linear function of the input features, trained by minimizing cross-entropy loss with L2 regularization. It serves as the linear baseline against which the benefit of nonlinear models can be assessed. Given the strongly non-linear relationship between koi\_score and disposition observed at intermediate score values, logistic regression is a useful diagnostic of the cost of assuming linear separability for this problem.
+
+\subsubsection{Decision Tree}\label{subsubsec4a2}
+
+Decision trees recursively partition the feature space along axis-aligned splits chosen to maximize information gain (Gini impurity reduction). An unconstrained tree was first trained to establish an overfitting baseline, followed by a depth-regularized variant with depth selected via cross-validation. The transition from the unconstrained tree (training accuracy = 100\%, test accuracy = 86.1\%) to the depth-constrained tree (test accuracy = 86.8\%) illustrates the basic bias-variance trade-off and provides an interpretable baseline for the ensemble models built from decision-tree components.
+
+\subsubsection{Random Forest}\label{subsubsec4a3}
+
+Random Forest is an ensemble of decorrelated decision trees, each trained on a bootstrap sample and a random feature subset, with predictions combined by majority vote. Bagging reduces variance without a corresponding increase in bias, and tolerates redundant or correlated columns well, relevant here since several KOI uncertainty columns are highly correlated (e.g., koi\_duration\_err1 and koi\_duration\_err2). Mean impurity decrease provides a direct, model-level feature-importance ranking, linking predictions to astrophysical variables (Section~\ref{sec8}).
+
+\subsubsection{K-Nearest Neighbors (KNN)}\label{subsubsec4a4}
+
+No training is required for KNN because it classifies a query sample based on the maximum vote of the k nearest neighbours in the normalized feature space. It was added to the local geometry diagnostic of the KOI feature space, where strong performance would suggest that nearby samples share labels, while weaker performance, as seen here (Table~\ref{tab3}), would suggest that the simple local neighborhoods within this feature space are not well capturing the class boundaries, specifically between confirmed and false-positive candidates.
+
+\subsubsection{Support Vector Machine (RBF Kernel)}\label{subsubsec4a5}
+
+The RBF-kernel SVM builds a maximum-margin hyperplane in an implicit high-dimensional feature space which can learn arbitrary, smooth decision boundaries for appropriate regularization. Hyperparameters of the kernel and regularization ($C$ and $\gamma$) were optimized using 5-fold stratified cross validation on the training set.
+
+\subsection{Deep Learning Models}\label{subsec4b}
+
+We evaluated five base neural architectures across nine experimental configurations on the raw light-curve data, using PyTorch with the Adam optimizer (learning rate $1\times10^{-3}$) and cross-entropy loss. Each architectural choice was motivated by the hypothesis that it would align to different aspects of the structural properties of the transit signals, and is described below and discussed together under a common interpretive lens in Section~\ref{subsec7b}.
+
+\subsubsection{Multilayer Perceptron (MLP) - Baseline}\label{subsubsec4b1}
+
+The MLP receives the 3,197-point light curve as a flattened vector and does not explicitly encode local temporal relationships, translation invariance, or sequential structure. This is a mismatch in representation for transit detection because a transit is not a collection of independent flux values, but rather a locally-contiguous, morphologically-structured dip. The MLP fails to learn the minority class (99.21\% validation accuracy, 0\% minority recall), while with weight decay ($1\times10^{-5}$) it underfits. The MLP is thus a diagnostic baseline indicating that, without considering the temporal structure, there will be a significant loss of performance.
+
+\subsubsection{Convolutional Neural Network (CNN)}\label{subsubsec4b2}
+
+The 1D convolutional filters learn local patterns, in this case, the distinctive flux-dip pattern of a transit, regardless of its location in the sequence. Two convolutional layers with interleaved max pooling were followed by a fully connected classification head. The CNN without stratified batch sampling tends to overestimate the majority class and a high accuracy of 99.31\% with a minority-class recall of 0\%, whereas the CNN with a stratified sampler has a lower accuracy of 96.46\% and a higher macro recall of 0.56, as expected.
+
+\subsubsection{Long Short-Term Memory (LSTM)}\label{subsubsec4b3}
+
+The gated cell states in LSTMs are used to hold or forget information over long periods of time. The timescales of stellar variability in the transit signal are characteristic, and thus an LSTM may be expected to make use of the long range correlations to provide context to a candidate dip. The LSTM, however, performed worse than the CNN (Table~\ref{tab6}), as the information needed for diagnosis (depth, duration, and shape) is very limited in temporal extent compared to the overall observation, and presents a challenge for optimization. We also evaluated a Bidirectional LSTM (BiLSTM) configuration to test whether processing the sequence in both directions improves transit detection.
+
+\subsubsection{CNN-LSTM Hybrid}\label{subsubsec4b4}
+
+The hybrid architecture stacks convolutional layers that extract local transit-morphology feature maps, followed by a unidirectional LSTM that integrates these feature maps across the full observation window. Fine-grained local structure detection is handled by the convolutional stage, while the recurrent stage provides sequential context to help distinguish isolated noise fluctuations from periodic transit events; critically, the LSTM operates on compressed convolutional features rather than raw flux, keeping its effective input sequence short. This design achieved the best overall performance balance among the deep learning architectures evaluated (Section~\ref{subsec6b}). Additionally, we tested a configuration incorporating a self-attention mechanism (CNN-LSTM + Attention) before the classification layer to better weigh the extracted sequential features.
+
+\subsubsection{Transformer}\label{subsubsec4b5}
+
+The Transformer uses multi-head self-attention to relate every pair of timesteps directly, representing the most globally-connected architecture evaluated. The configuration used 2 attention heads, 2 encoder layers, an embedding dimension of 64, and a maximum sequence length of 300 timesteps (down from 3,197), a compromise between computational tractability and coverage (Section~\ref{sec9}). Under this configuration, the evaluated Transformer is poorly suited to the tested regime: it produces near-random predictions (validation accuracy \textasciitilde0.69\%) under balanced-batch sampling, and reduces to majority-class prediction (99.31\% accuracy, 0\% minority recall) without sampling. With only 37 positive training/validation examples, the attention mechanism does not appear to receive sufficient variation to learn which temporal positions are diagnostically informative, a pattern examined further via attention-map visualization in Section~\ref{subsec6e}.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Deep Learning Architecture Configurations and Imbalance-Handling Strategy}
+\label{tab:dl_configs}
+
+\begin{tabular}{p{2.1cm} p{5.9cm} p{3.4cm}}
+\toprule
+Model & Configuration & Imbalance Handling \\
+\midrule
+
+MLP &
+Dense(128), ReLU, Dropout(0.3), Dense(64), ReLU, Dense(2) &
+None (majority-class collapse observed) \\
+
+CNN &
+Conv1D(32,5), Conv1D(64,5), MaxPool(2), Dense(64), Dropout(0.3), Dense(2) &
+WeightedRandomSampler (stratified batches) \\
+
+LSTM &
+LSTM(hidden=64, layers=1), Dense(32), Dropout(0.3), Dense(2) &
+WeightedRandomSampler \\
+
+BiLSTM &
+BiLSTM(hidden=64, layers=1), Dense(32), Dropout(0.3), Dense(2) &
+WeightedRandomSampler \\
+
+CNN-LSTM Hybrid &
+Conv1D(32,5), MaxPool(2), Conv1D(64,5), MaxPool(2), Conv1D(128,5), MaxPool(2), LSTM(hidden=64), Dense(32), Dropout(0.3), Dense(2)) &
+WeightedRandomSampler \\
+
+CNN-LSTM + Attention &
+CNN-LSTM Hybrid with self-attention before the classification layer &
+WeightedRandomSampler \\
+
+Transformer &
+2-head self-attention, feed-forward network, Dense(2) &
+Evaluated both with and without WeightedRandomSampler \\
+
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Deep Learning Hyperparameters and Architecture Settings}
+\label{tab:hyperparams}
+\small
+
+\begin{tabular}{p{4cm} p{8cm}}
+\toprule
+Parameter & Value \\
+\midrule
+
+Optimizer & Adam \\
+
+Learning Rate & 0.001 \\
+
+Batch Size & 32 \\
+
+Epochs & 20 \\
+
+Loss Function & Cross-Entropy Loss \\
+
+Class Balancing & WeightedRandomSampler (where applicable; see Table~\ref{tab:dl_configs}) \\
+
+CNN Filters & 32, 64, 128 \\
+
+CNN Kernel Size & 5 \\
+
+Pooling Layer & MaxPool1D(2) \\
+
+LSTM Hidden Units & 64 \\
+
+LSTM Layers & 1 \\
+
+BiLSTM Hidden Units & 64 \\
+
+Dropout Rate & 0.3 \\
+
+Output Layer & Dense(2), Softmax \\
+
+Transformer Attention Heads & 2 \\
+
+Classification Task & Binary (Exoplanet / Non-Exoplanet) \\
+
+\bottomrule
+\end{tabular}
+\end{table}
+Table~\ref{tab:hyperparams} summarizes the architectural and optimization hyperparameters used throughout. Unless otherwise stated, all models were trained with the Adam optimizer at a learning rate of $10^{-3}$, batch size 32, for up to 20 epochs.
+
+\clearpage %
+
+\section{Experimental Setup}\label{sec5}
+
+\subsection{Machine Learning Experiments}\label{subsec5a}
+
+All machine learning experiments used scikit-learn. The 9,564-sample KOI dataset was partitioned into an 80/20 stratified train/test split (7,651 training, 1,913 test samples), with stratification preserving the three-class distribution. Hyperparameters were selected via 5-fold stratified cross-validation on the training set: Decision Tree maximum depth was tuned over \{5, 10, 15, 20, None\}; KNN's $k$ was tuned over \{3, 5, 7, 11, 15\}; SVM's $C$ was tuned over \{0.1, 1, 10, 100\} and $\gamma$ over \{`scale', `auto', 0.001, 0.01\}. Random Forest was trained with 100 estimators and no depth constraint, since bagging inherently controls variance. Feature importance was computed as mean impurity decrease across all trees.
+
+\subsection{Deep Learning Experiments}\label{subsec5b}
+
+All deep learning experiments used PyTorch with the Adam optimizer (learning rate $1\times10^{-3}$, no learning-rate scheduling unless noted) and cross-entropy loss. Models were trained for up to 20 epochs, with early stopping applied when validation loss failed to decrease for 5 consecutive epochs. The training partition (4,069 samples) was fed into the model using a PyTorch DataLoader with a batch size of 32 for CNN, LSTM and hybrid models, and a batch size 16 for Transformer experiments. Where stratified sampling was applied (Table~\ref{tab:dl_configs}), a WeightedRandomSampler assigned each positive sample a weight of 1.0 and each negative sample a weight of 1/135, producing approximately balanced batches. All experiments were executed on an NVIDIA RTX 5060 GPU with CUDA acceleration.
+
+\subsection{Evaluation Metrics}\label{subsec5c}
+
+Overall accuracy, per-class precision, recall, F1-score, and macro- and weighted-averaged values were used to assess classification performance. Confusion matrices are reported for the best-performing deep learning models, since false negatives (missed exoplanets) and false positives (spurious detections) carry asymmetric operational costs. Precision-recall curves and average precision (AP) characterize the CNN-LSTM with Attention model's discriminative behavior across thresholds. For the Transformer, attention weight maps are visualized as a diagnostic of the spatial focus of the attention mechanism.
+
+\section{Results}\label{sec6}
+
+\subsection{Machine Learning Results}\label{subsec6a}
+
+Table~\ref{tab3} reports the classification performance of all five machine learning models on the held-out KOI catalog test set, with per-class metrics alongside overall accuracy and macro-averaged scores.
+
+\begin{table}[!ht]
+\centering
+\small
+\caption{Machine Learning Classifier Performance on NASA KOI Test set Catalog[20\%] (1,913 samples, 3-class)}\label{tab3}
+\begin{tabular}{p{3cm}ccccc}
+\toprule
+Model & Accuracy & Prec. (macro) & Recall (macro) & F1 (macro) & F1 (wtd avg)\\
+\midrule
+Logistic Regression & 88.71\% & 0.85 & 0.86 & 0.85 & 0.89  \\
+Decision Tree (unconstrained) & 86.10\% & 0.82 & 0.82 & 0.82 & 0.86  \\
+Decision Tree (max\_depth) & 86.83\% & 0.83 & 0.85 & 0.84 & 0.87  \\
+Random Forest & 91.17\% & 0.89 & 0.89 & 0.89 & 0.91 \\
+KNN & 81.34\% & 0.77 & 0.77 & 0.77 & 0.81  \\
+SVM (RBF Kernel) & 84.37\% & 0.81 & 0.80 & 0.80 & 0.84  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\FloatBarrier
+\begin{table}[htbp]
+\centering
+\caption{Qualitative Analysis of Machine Learning Classifiers}
+\label{tab:ml_observations}
+
+\begin{tabular}{p{4cm} p{9cm}}
+\toprule
+Model & Key Observation \\
+\midrule
+
+Logistic Regression &
+Strong baseline performance; most classification errors occurred between Classes 0 and 1, while Class 2 was identified reliably. \\
+
+Decision Tree (Unconstrained) &
+Achieved perfect training accuracy, indicating severe overfitting and reduced generalization capability. \\
+
+Decision Tree (Max Depth) &
+Depth restriction improved generalization and reduced overfitting while maintaining competitive performance. \\
+
+Random Forest &
+Best overall performer with the highest accuracy and balanced macro precision, recall, and F1 scores across all classes. \\
+
+KNN &
+Lowest-performing machine learning classifier; sensitive to feature-space overlap and local neighborhood structure. \\
+
+SVM (RBF Kernel) &
+Provided stable generalization performance but showed weaker discrimination for Class 0 compared with Random Forest. \\
+
+\bottomrule
+\end{tabular}
+\end{table}
+
+Random Forest achieved the highest observed accuracy (91.17\%) and balanced macro precision, recall, and F1 (all 0.89), consistent with ensemble bagging effectively capturing non-linear decision boundaries in tabular data with correlated features. The confusion matrix below illustrates its class-specific behavior:
+\begin{table}[!ht]
+\caption{Random Forest Confusion Matrix (Best machine learning Model) Test Set (20\% Split, 1,913 Samples)}\label{tab4}%
+\begin{tabular}{@{}llll@{}}
+\toprule
+Predicted $\rightarrow$ & Class 0 & Class 1 & Class 2 \\
+\midrule
+Actual Class 0 & 392 & 70 & 12 \\
+Actual Class 1 & 70 & 396 & 5 \\
+Actual Class 2 & 12 & 0 & 956 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Feature importance analysis yielded the following top-10 predictive variables:
+
+\FloatBarrier
+\begin{table}[H]
+\caption{Random Forest Feature Importance (Top 10)}\label{tab5}%
+\begin{tabular}{@{}ll@{}}
+\toprule
+Feature & Importance Score \\
+\midrule
+koi\_score (Disposition Score) & 0.1818 \\
+koi\_fpflag\_nt (Not Transit-Like Flag) & 0.0881 \\
+koi\_fpflag\_ss (Stellar Eclipse Flag) & 0.0665 \\
+koi\_fpflag\_co (Centroid Offset Flag) & 0.0617 \\
+koi\_model\_snr (Transit SNR) & 0.0453 \\
+koi\_prad (Planetary Radius) & 0.0449 \\
+koi\_duration\_err2 & 0.0316 \\
+koi\_duration\_err1 & 0.0299 \\
+koi\_steff\_err1 (Stellar Temp. Unc.) & 0.0258 \\
+koi\_prad\_err1 (Radius Unc.) & 0.0240 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\linewidth]{ml img.png}
+\caption{Machine Learning Classifier Performance Comparison: Test Accuracy (bars) and Macro F1 Score $\times100$ (dashed line). Random Forest (green) achieves the highest accuracy; the F1 overlay shows accuracy and class balance tracking closely for this dataset.}\label{fig1}
+\end{figure}
+\clearpage %
+\subsection{Deep Learning Results}\label{subsec6b}
+
+Table~\ref{tab6} reports validation-set performance for all Deep Learning architectures, computed on the 1,018-sample held-out validation partition (1,011 non-host stars, 7 confirmed exoplanet hosts). Reported accuracy values must be interpreted alongside macro recall: high accuracy with macro recall near 0.50 indicates trivial majority-class prediction.
+
+\begin{table}[H]
+\centering
+\small
+\caption{Deep Learning Architecture Performance on Light-Curve Validation Set (1,018 samples, binary classification)}\label{tab6}
+\begin{tabular}{p{3cm}cccc}
+\toprule
+Architecture & Val. Acc. & Macro Prec. & Macro Recall & Macro F1 \\
+\midrule
+MLP (baseline) & 99.21\% & \textasciitilde0.50 & \textasciitilde0.50 & \textasciitilde0.50 \\
+CNN (stratified sampler) & 96.46\% & 0.51 & 0.56 & 0.52 \\
+CNN (without sampler) & 99.31\% & 0.50 & 0.50 & 0.50 \\
+LSTM & 88.21\% & 0.50 & 0.44 & 0.47\\
+BiLSTM & 73.18\% & 0.50 & 0.44 & 0.43 \\
+CNN-LSTM Hybrid (best) & 95.97\% & 0.54 & 0.70 & 0.55 \\
+CNN-LSTM + Attention & 98.72\% & 0.50 & 0.50 & 0.50 \\
+Transformer (w/ sampler) & 0.69\% & \textasciitilde0.00 & 0.50 & \textasciitilde0.01\\
+Transformer (no sampler) & 99.31\% & 0.50 & 0.50 & 0.50 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Qualitative Analysis of Deep Learning Architectures}
+\label{tab6_obs}
+
+\begin{tabular}{p{4cm} p{9cm}}
+\toprule
+Architecture & Key Observation \\
+\midrule
+
+MLP (baseline) &
+Trivial majority-class prediction; failed to identify exoplanet instances despite high validation accuracy. \\
+
+CNN (stratified sampler) &
+Improved minority-class recall by exploiting local transit patterns; introduced moderate false positives. \\
+
+LSTM &
+Long-range sequence modeling provided limited benefit for localized transit signatures. \\
+
+BiLSTM &
+Increased computational complexity and training time without corresponding performance gains. \\
+
+CNN-LSTM Hybrid (best) &
+Best overall balance between recall and false-positive control; achieved the highest macro recall among all tested deep learning models. \\
+
+CNN-LSTM + Attention &
+Attention mechanism provided negligible improvement and converged toward majority-class predictions. \\
+
+Transformer (w/ sampler) &
+Training became unstable under extreme class imbalance; model collapsed toward minority-class predictions. \\
+
+Transformer (no sampler) &
+Achieved high accuracy by predicting the majority class almost exclusively, resulting in poor minority-class detection. \\
+
+\bottomrule
+\end{tabular}
+\end{table}
+
+\FloatBarrier
+The CNN-LSTM Hybrid with expanded feature mapping yielded the best confusion matrix among the deep learning architectures:
+
+\begin{table}[h]
+\caption{CNN-LSTM Hybrid Confusion Matrix (Best deep learning Model, Validation Set). 3 of 7 exoplanet hosts correctly identified.}\label{tab7}%
+\begin{tabular}{@{}lll@{}}
+\toprule
+Predicted $\rightarrow$ & Non-host (0) & Exoplanet (1) \\
+\midrule
+Actual Non-host (0) & 974 & 37 \\
+Actual Exoplanet (1) & 4 & 3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\FloatBarrier
+On the held-out test partition (570 samples, 5 positive), the same model achieved the following performance:
+
+\begin{table}[h]
+\caption{CNN-LSTM Hybrid Test Set Performance (570 samples).
+Accuracy: 98.95\%; Macro Recall: 0.4991; Macro F1: 0.4974; Weighted F1: 0.9860.
+Despite high overall accuracy, the model failed to identify exoplanet
+instances in the unseen test set, reflecting the severe class imbalance
+present in the dataset and the challenge of generalizing minority-class
+detection under real-world conditions.}\label{tab8}%
+\begin{tabular}{@{}lll@{}}
+\toprule
+Predicted $\rightarrow$ & Non-host (0) & Exoplanet (1) \\
+\midrule
+Actual Non-host (0) & 564 & 1 \\
+Actual Exoplanet (1) & 5 & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=1.0\linewidth]{dlimgg.png}
+\caption{Deep Learning Architecture Performance: Validation Accuracy (bars) and Macro Recall $\times100$ (dashed line). CNN-LSTM Hybrid (green) achieves the best balance. Models in grey indicate trivial predictions; red indicates degraded or failed configurations.}\label{fig2}
+\end{figure}
+
+
+\subsection{CNN-LSTM Hybrid Architecture}\label{subsec6c}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=1.1\linewidth]{dlarchi.png}
+\caption{CNN-LSTM Hybrid Architecture. Three convolutional layers extract local morphological features from the raw flux sequence, followed by a unidirectional LSTM that integrates the compressed feature maps across the temporal axis.The fully connected classification head produces two-class output logits.}
+\label{fig3}
+\end{figure}
+
+\subsection{CNN-LSTM with Attention - Precision-Recall Analysis}\label{subsec6d}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.87\linewidth]{atten.jpg}
+\caption{Precision-Recall Curve for the CNN-LSTM-Attention model on the validation set (Average Precision = 0.015). The sharp precision collapse at near-zero recall, combined with a nearly flat low-precision curve across all recall levels, indicates that the attention mechanism did not improve the model's ability to discriminate rare exoplanet candidates under extreme class imbalance.}\label{fig4}
+\end{figure}
+
+\subsection{Transformer Attention Map Analysis}\label{subsec6e}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\linewidth]{transformer_attention_grid.png}
+\caption{Self-attention patterns learned by the evaluated Transformer configuration across correctly classified negative samples (TN), misclassified positive samples (FN), and the dataset-wide average attention map. Attention consistently concentrates around a small number of fixed temporal positions, particularly near sequence indices 20--50 and 270--295. Similar attention distributions across both TN and FN samples indicate that the model did not adapt its attention dynamically to sample-specific transit events. The persistence of these regions in the average attention map is consistent with attention collapse, discussed further in Section~\ref{subsec7d}.}\label{fig5}
+\end{figure}
+
+\section{Discussion}\label{sec7}
+
+\subsection{Machine Learning vs. Deep Learning: Complementary Paradigms for Distinct Data Modalities}\label{subsec7a}
+
+The two evaluation tracks are not directly comparable: the machine learning classifiers operate on already vetted, physically motivated catalog features, whereas the deep learning architectures must extract discriminative structure directly from raw, noisy flux sequences with no engineered features. Read as complementary rather than competing approaches, catalog-based machine learning models are preferable wherever Kepler-style pipeline parameters already exist, offering low computational cost, interpretable feature importances (Section~\ref{subsec6a}, Table~\ref{tab5}), and accuracy comparable to hand-tuned rule-based vetters (Section~\ref{sec8}). Raw-signal deep learning models remain necessary where only photometry is available, such as during early mission data collection, in real-time streaming pipelines prior to catalog vetting, or for new instruments lacking an established feature-engineering pipeline. However, the CNN-LSTM Hybrid's validation-to-test performance gap (Tables~\ref{tab7} and \ref{tab8}; discussed further in Section~\ref{subsec7e}) shows that raw-signal performance under this data regime cannot be assessed from validation accuracy alone. Interpretation of minority-class metrics on the light-curve track also warrants caution given the small number of confirmed exoplanet hosts in the held-out partition (Section~\ref{sec9}).
+
+\subsection{Interpreting Performance Through Architectural Inductive Bias}\label{subsec7b}
+
+The ordering of the observed models performance is consistent with the differences in architectural inductive bias and the alignment with the structural properties of the transit signals. These effects are not, however, entirely independent of differences in input length, sampling strategy and architectural configuration. Such a comparison should thus be understood as indicative of an overall architectural pattern, and not as a causal separation of inductive bias.
+
+This is similar to the structural characteristics of transit signals which have characteristic morphology and localized temporal properties, and periodic structure for multi-transit systems. Convolutional filters explicitly represent local pattern detection and translation equivariance, which makes them appropriate for detecting features that are similar to transit at various temporal locations. In order to incorporate the sequential context, recurrent architectures were used, but the evaluated LSTM and BiLSTM did not outperform the CNN-LSTM Hybrid. Recurrent architectures optimized for long-range dependency modelling, on the other hand, seem to introduce a mismatch in the representation: the bidirectional LSTM (BiLSTM) actually reduced the validation accuracy from 88.2\% to 73.2\%. It also seems there was no benefit, if anything, in increasing the amount of context over a longer time frame when the diagnostic signal was only available over a short time frame (Table~\ref{tab6}). This ordering is for the entire CNN-LSTM Hybrid architecture and is not necessarily a strict component-wise ablation (Section~\ref{sec9}).
+
+
+\subsection{Class Imbalance: Mitigation Strategies}\label{subsec7c}
+
+The configurations with weighted random sampling had higher false positive rates but higher macro recall during the evaluation, with increased exposure to minority classes during training. The model-training partition had only 30 positive examples, which had the potential of overfitting. The CNN-LSTM Hybrid had the best macro recall observed, but the experiment was unable to separate the effect of the deeper convolutional feature extractor from the sampling strategy. In addition, the CNN-LSTM Hybrid with a self-attention layer ("CNN-LSTM + Attention", Table~\ref{tab6}) had a very low macro recall (Figure~\ref{fig4} average precision = 0.015), which means that the positive class did not benefit much in terms of discrimination. This is in line with the notion that, with only 37 positive training/validation examples, an attention mechanism has very little signal to learn which time windows are diagnostically relevant and will end up selecting a window that is correlated with the majority class.
+
+\subsection{Transformer Analysis: Failure Modes and Diagnostic Insights}\label{subsec7d}
+
+The evaluated Transformer configuration showed two extreme responses to class imbalance, rather than a graded response. Balanced-batch sampling predicted nearly all validation samples as positive, while without sampling it predicted nearly all samples as negative (Table~\ref{tab6}). Both set-ups failed to discriminate between the classes meaningfully. The different failure modes in the two sampling setups are consistent with a training or optimization problem under the evaluated setup, but it is not clear which one is the most dominant cause.
+
+This is supported by the attention map in figure~\ref{fig5}. Attention weight focuses on a few fixed time locations, irrespective of whether the actual sample is a true negative or a misclassified positive, and this is true for the sample-averaged map as well. The model seems to have learned an attention pattern that is independent of the sample-specific location of the transit event and resembles the prior class distribution. This is consistent with the limited diversity of the 37 positive training/validation examples being too few to learn the diagnostically relevant region of a light-curve is variable with transit timing.
+
+The result is limited in its generalizability by two aspects of the experimental setting. First, there were very few positive training examples — previous studies have shown that mixing real and synthetic data can be useful for exoplanet classification \cite{bib7}. It is unclear whether such augmentation would enhance the performance of the tested Transformer configuration. Second, the evaluated Transformer configuration employed sequences of only 300 timesteps from the original 3,197 timesteps (Section~\ref{subsubsec4b5}) which is a smaller effective context than the other architectures were given in their convolutional or recurrent forms. The results thus reflect the performance of this particular configuration of the Transformer under this particular set of data, and should not be interpreted as an assertion that attention-based architectures are generally suitable for detecting transit.
+
+\subsection{Generalization: Validation vs. Test Performance}\label{subsec7e}
+
+The largest difference between validation and test performance is for CNN-LSTM Hybrid (Tables~\ref{tab7} and \ref{tab8}), the main finding of this study. Although the model correctly identified 3 of the 7 positive examples in the validation partition, it was unable to identify any of the 5 positive examples in the held-out test partition, and had an overall accuracy of 98.95\% (with a weighted F1 score of 0.9860 largely due to the majority class). This result shows the uncertainty of the evaluation of the minority-class when there are few positive examples. In this case, validation accuracy is not a good measure of minority-class generalization. Evaluation should then provide minority class sensitive metrics such as macro recall and macro F1 score, in addition to accuracy.
+
+\section{Integration with Astrophysics}\label{sec8}
+
+These results directly impact the Kepler and TESS operational vetting pipelines. The Kepler Robovetter is based on a fixed sequence of threshold tests applied to the same catalog parameters used in the machine learning track in this paper \cite{bib5} and is now supplemented by newer deep learning ensembles like ExoMiner \cite{bib14} which take automated classification to expert-level accuracy at production scale. The test accuracy of the Random Forest on the structured KOI dataset was 91.17\%. This result illustrates the usefulness of the evaluated catalog-based classifier, but is not necessarily comparable to the Robovetter's performance as it is evaluated differently and using different metrics \cite{bib8}. Unlike a fixed rule-based system: it can be retrained as the catalog is updated and it provides probability estimates instead of a binary label, which can be used to prioritize follow-up observations in the downstream process. The present comparison is not meant to be a comparison of the absolute accuracy of the algorithms, but rather to isolate the contribution of algorithmic family and architectural inductive bias under controlled, modest-scale conditions, while ExoMiner is trained and validated at much larger scale with significant production engineering resources.
+
+The recovered feature hierarchy by the Random Forest (Table~\ref{tab5}) is interpretable from the astrophysical perspective. The disposition score, which is a summary of several vetting tests performed upstream (koi\_score, 18.2\% importance) is just the type of pipeline-derived uncertainty estimate that seems to be re-weighted by catalog-based classifiers, but not re-derived from scratch (Section~\ref{subsec2b}). The order of the false-positive flags (not-transit-like $>$ stellar-eclipse $>$ centroid-offset) reflects the decreasing difficulty of excluding each of the false-positive scenarios, and physical plausibility features, like transit signal-to-noise and planetary radius, provide independent corroborating evidence consistent with a genuine planetary transit.
+
+In addition, TESS's much shorter baseline of observation per sector (27 days, compared to Kepler's nearly four years) further diminishes the temporal context available to any sequence model, further emphasizing the relevance of locally-constrained architectures: the CNN-LSTM Hybrid's convolutional stage is translation-invariant with respect to transit timing, while its recurrent stage operates on compressed local features, and does not require long temporal context, making the architecture well matched, in principle, to short-baseline survey data. The direct evaluation approach on TESS light-curves is still an important direction for future work (Section~\ref{sec9}).
+
+Future missions like PLATO \cite{bib11}  will bring huge photometric datasets for transit detection, and ARIEL \cite{bib12} will increase the number of known exoplanets that can be characterized from their atmosphere. For these, the evaluation approach developed here, with data and training protocol held constant and systematically changing the architectural inductive bias and reporting minority class sensitive metrics under realistic imbalance, is not a recommendation for a fixed architecture, but rather a methodology that can be transferred.
+
+\section{Limitations}\label{sec9}
+
+This study has several limitations that should inform how its findings are interpreted.
+
+\begin{itemize}[leftmargin=1.6em]
+\item \textbf{Extremely small positive class.} The light-curve track contains only 37 positive training/validation examples and 5 positive test examples; individual predictions can substantially shift minority-class metrics, and the reported macro recall and F1 values should be interpreted with this in mind.
+\item \textbf{Single train/validation/test split.} Both tracks use a single fixed partition rather than repeated resampling or stratified $k$-fold cross-validation; performance estimates, particularly for the light-curve track, may be sensitive to this specific partition.
+\item \textbf{No formal statistical significance testing.} Reported differences between architectures reflect single-run point estimates under a shared protocol; no significance tests (e.g., McNemar's test) or confidence intervals were computed, and performance differences should be read as observed rather than statistically established.
+\item \textbf{No component-level ablation.} The CNN-LSTM Hybrid was evaluated only as a complete architecture; the individual contributions of its convolutional depth, recurrent module, and sampling strategy were not isolated.
+\item \textbf{Transformer sequence truncation.} For computational tractability, the evaluated Transformer configuration used sequences truncated to 300 of the original 3,197 timesteps, a shorter effective context than the convolutional and recurrent architectures processed; this limits direct comparison and constrains conclusions to the evaluated configuration rather than to attention-based architectures in general.
+\item \textbf{No synthetic data augmentation.} Prior work suggests synthetic augmentation can be important for training robust minority-class classifiers under comparable imbalance \cite{bib7}; no such augmentation was applied here.
+\item \textbf{Limited external validation.} All light-curve results derive from a single Kepler-derived dataset; generalization to TESS or future-mission data (Section~\ref{sec8}) has not been directly tested.
+\end{itemize}
+
+Future work should address these points through repeated cross-validation with formal significance testing, systematic ablation of the CNN-LSTM Hybrid, full-length-sequence Transformer evaluation, and synthetic augmentation or transfer-learning strategies for the minority class.
+
+\section{Conclusion}\label{sec10}
+
+This study systematically compared five classical machine learning classifiers and five deep learning architectures across two complementary Kepler-derived datasets, investigating the effect of architectural inductive bias under a shared experimental protocol. Random Forest achieved the highest observed performance among the classical classifiers on the structured KOI catalog (macro F1 = 0.89), with the disposition score and false-positive flags dominating feature importance, consistent with catalog-based classifiers primarily re-weighting upstream pipeline uncertainty rather than deriving transit morphology independently. Among the deep learning architectures, the CNN-LSTM Hybrid achieved the highest observed validation performance (macro recall = 0.70), but this performance did not transfer to the held-out test set (macro recall = 0.4991), despite high accuracy on both partitions. The evaluated Transformer configuration collapsed to majority-class prediction under the same conditions, and attention-map analysis is consistent with an input-independent attention pattern; adding self-attention to the CNN-LSTM Hybrid produced a similar collapse in recall.
+
+Taken together, these results provide evidence that differences in architectural inductive bias are associated with differences in performance under the severe class imbalance and scarce positive examples characteristic of real transit-detection data, while indicating that validation-set performance, including validation-set recall, is not by itself a reliable indicator of minority-class generalization. This study does not establish an optimal architecture for exoplanet detection; rather, it provides evidence regarding the behavior of specific, representative architectural inductive biases under the specific data and imbalance conditions examined here (Section~\ref{sec9}). Extending this protocol with repeated cross-validation, component-level ablation, synthetic augmentation, and evaluation on TESS data would help establish how far these observations generalize.
+
+\section*{Data Availability Statement}
+
+All datasets used in this study are publicly available. The NASA KOI catalog is accessible via the NASA Exoplanet Archive (\url{https://exoplanetarchive.ipac.caltech.edu}). The Exoplanet Hunting in Deep Space dataset is available on Kaggle (\url{https://www.kaggle.com/datasets/keplersmachines/kepler-labelled-time-series-data}).
+
+\section*{Code Availability}
+
+The preprocessing scripts, model implementations, and evaluation pipelines used in this study are available at: \url{https://github.com/sushhxnth/AIBUSCI-paper}
+
+%% ==========================================================
+%% Bibliography (numbered thebibliography, matching the
+%% \cite{bibX} keys used throughout the manuscript). This
+%% numbered, non-authoryear style is consistent with the
+%% default (no "authoryear" option) elsarticle citation mode.
+%% ==========================================================
+
+\begin{thebibliography}{10}
+
+\bibitem{bib1}
+W.~J. Borucki et al., ``Kepler Planet-Detection Mission: Introduction and First Results,'' Science, vol. 327, no. 5968, pp. 977--980, 2010. \url{https://doi.org/10.1126/science.1185402}
+
+\bibitem{bib2}
+G.~R. Ricker et al., ``Transiting Exoplanet Survey Satellite (TESS),'' J. Astron. Telesc. Instrum. Syst., vol. 1, no. 1, p. 014003, 2015. \url{https://doi.org/10.1117/1.JATIS.1.1.014003}
+
+\bibitem{bib3}
+T.-Y. Lin, P. Goyal, R. Girshick, K. He, and P. Doll\'ar, ``Focal Loss for Dense Object Detection,'' in Proc. IEEE Int. Conf. Comput. Vis. (ICCV), 2017, pp. 2980--2988. \url{https://doi.org/10.1109/ICCV.2017.324}.
+
+\bibitem{bib4}
+N.~V. Chawla, K.~W. Bowyer, L.~O. Hall, and W.~P. Kegelmeyer, ``SMOTE: Synthetic Minority Over-sampling Technique,'' J. Artif. Intell. Res., vol. 16, pp. 321--357, 2002. \url{https://doi.org/10.1613/jair.953}
+
+\bibitem{bib5}
+D.~J. Coughlin et al., ``Planetary Candidates Observed by Kepler. VII. The First Fully Automated Catalog Based on the Entire Four-Year Data Set,'' 
+The Astrophysical Journal Supplement Series, vol. 224, no. 1, p. 12, 2016.
+\url{https://doi.org/10.3847/0067-0049/224/1/12}
+
+\bibitem{bib6}
+C.~J. Shallue and A. Vanderburg, ``Identifying Exoplanets with Deep Learning: A Five-planet Resonant Chain around Kepler-80 and an Eighth Planet around Kepler-90,'' Astron. J., vol. 155, no. 2, p. 94, 2018. \url{https://doi.org/10.3847/1538-3881/aa9e09}
+
+\bibitem{bib7}
+E. Olmedo et al., ``Deep Learning Exoplanets Detection by Combining Real and Synthetic Data,'' Sci. Rep., vol. 12, p. 8673, 2022. \url{https://doi.org/10.1038/s41598-022-12718-1}
+
+\bibitem{bib8}
+S.~E. Thompson et al., ``Planetary Candidates Observed by Kepler. VIII. A Fully Automated Catalog with Measured Completeness and Reliability Based on Data Release 25,'' 
+The Astrophysical Journal Supplement Series, vol. 235, no. 2, p. 38, 2018.
+\url{https://doi.org/10.3847/1538-4365/aab4f9}
+
+\bibitem{bib9}
+A. Vaswani et al., ``Attention is All You Need,'' Advances in Neural Information Processing Systems (NeurIPS), vol. 30, 2017.
+
+\bibitem{bib10}
+Y. Cui, M. Jia, T.-Y. Lin, Y. Song, and S. Belongie, ``Class-Balanced Loss Based on Effective Number of Samples,'' in Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recognit. (CVPR), 2019, pp. 9268--9277. \url{https://doi.org/10.1109/CVPR.2019.00949}
+
+\bibitem{bib11}
+H. Rauer et al., ``The PLATO 2.0 Mission,'' Exp. Astron., vol. 38, pp. 249--330, 2014. \url{https://doi.org/10.1007/s10686-014-9383-4}
+
+\bibitem{bib12}
+G. Tinetti et al., ``A Chemical Survey of Exoplanets with ARIEL,'' Exp. Astron., vol. 46, pp. 135--209, 2018. \url{https://doi.org/10.1007/s10686-018-9598-x}
+
+\bibitem{bib13}
+S.~D. McCauliff et al., ``Automatic Classification of Kepler Planetary Transit Candidates,'' Astrophys. J., vol. 806, no. 1, p. 6, 2015. \url{https://doi.org/10.1088/0004-637X/806/1/6}
+
+\bibitem{bib14}
+H. Valizadegan et al., ``ExoMiner: A Highly Accurate and Explainable Deep Learning Classifier That Validates 301 New Exoplanets,'' Astrophys. J., vol. 926, no. 2, p. 120, 2022. \url{https://doi.org/10.3847/1538-4357/ac4399}
+
+\bibitem{bib15}
+M. Ansdell et al., ``Scientific Domain Knowledge Improves Exoplanet Transit Classification with Deep Learning,'' Astrophys. J. Lett., vol. 869, no. 1, p. L7, 2018. \url{https://doi.org/10.3847/2041-8213/aaf23b}
+
+
+\end{thebibliography}
+
+\end{document}

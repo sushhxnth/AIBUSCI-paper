@@ -1,0 +1,26 @@
+# Core
+numpy
+pandas
+
+# Visualization
+matplotlib
+seaborn
+
+# ML utilities
+scikit-learn
+# Progress + utils
+tqdm
+
+# Image processing (for CV tasks)
+Pillow
+opencv-python
+
+# Notebook support (optional but useful)
+jupyter
+ipykernel
+
+# File handling
+PyYAML
+
+# Logging / experiment tracking (optional but recommended)
+tensorboard

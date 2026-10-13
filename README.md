@@ -223,3 +223,8 @@ For questions about the implementation, reproducibility, or interpretation of th
 ### Scope statement
 
 This repository documents research experiments. It is not a validated operational exoplanet-confirmation system, and its outputs should not be used as standalone evidence that a candidate is a confirmed exoplanet.
+
+## Copyright
+© 2026 Sushanth. All Rights Reserved. 
+
+This repository and its contents are provided for academic review and portfolio evaluation purposes only. No permission is granted to use, copy, modify, distribute, or contribute to this code or manuscript.
